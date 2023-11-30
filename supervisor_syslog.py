@@ -1,72 +1,88 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
-import sys
-import os
+# Need to tweak supervisor-syslog library to use SOCK_DGRAM
+# Ref: https://github.com/drrt/supervisor-syslog
+
 import argparse
+import datetime
+import os
 import socket
 import ssl
-import yaml
+import sys
 import tempfile
 import time
-import datetime
+
+import yaml
 
 priority_names = {
-    "emerg":    0,
-    "alert":    1,
+    "emerg": 0,
+    "alert": 1,
     "critical": 2,
-    "error":    3,
-    "warning":  4,
-    "notice":   5,
-    "info":     6,
-    "debug":    7,
-    }
+    "error": 3,
+    "warning": 4,
+    "notice": 5,
+    "info": 6,
+    "debug": 7,
+}
 
 facility_names = {
-    "kern":     0,
-    "user":     1,
-    "mail":     2,
-    "daemon":   3,
-    "auth":     4,
-    "syslog":   5,
-    "lpr":      6,
-    "news":     7,
-    "uucp":     8,
-    "cron":     9,
+    "kern": 0,
+    "user": 1,
+    "mail": 2,
+    "daemon": 3,
+    "auth": 4,
+    "syslog": 5,
+    "lpr": 6,
+    "news": 7,
+    "uucp": 8,
+    "cron": 9,
     "authpriv": 10,
-    "ftp":      11,
-    "local0":   16,
-    "local1":   17,
-    "local2":   18,
-    "local3":   19,
-    "local4":   20,
-    "local5":   21,
-    "local6":   22,
-    "local7":   23,
-    }
+    "ftp": 11,
+    "local0": 16,
+    "local1": 17,
+    "local2": 18,
+    "local3": 19,
+    "local4": 20,
+    "local5": 21,
+    "local6": 22,
+    "local7": 23,
+}
 
 
-def syslog_socket(address=None, ca_certs=None, keyfile=None, certfile=None, tls=False):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def syslog_socket(
+    address=None, ca_certs=None, keyfile=None, certfile=None, tls=False, udp=False
+):
+    if udp:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    else:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
     if tls:
         cert_reqs = ssl.CERT_REQUIRED if ca_certs else ssl.CERT_NONE
-        s = ssl.wrap_socket(s, ca_certs=ca_certs, keyfile=keyfile,
-                            certfile=certfile, cert_reqs=cert_reqs)
+        s = ssl.wrap_socket(
+            s,
+            ca_certs=ca_certs,
+            keyfile=keyfile,
+            certfile=certfile,
+            cert_reqs=cert_reqs,
+        )
     s.connect(address)
     return s
 
 
 def event_fail(fd):
-    fd.write('RESULT 4\nFAIL')
+    fd.write("RESULT 4\nFAIL")
     fd.flush()
 
 
 def event_ok(fd):
-    fd.write('RESULT 2\nOK')
+    fd.write("RESULT 2\nOK")
     fd.flush()
 
 
 def event_ready(fd):
-    fd.write('READY\n')
+    fd.write("READY\n")
     fd.flush()
 
 
@@ -76,19 +92,24 @@ def write_stderr(s):
 
 
 def parse_commandline(parser):
-    parser.add_argument('--config', help='configuration file')
-    parser.add_argument('--server', help='name or address of remote syslog server')
-    parser.add_argument('--port', help='remote syslog server port', type=int)
-    parser.add_argument('--bsd', help='send BSD style logs', action='store_true')
-    parser.add_argument('--hostname', help='hostname to inject in syslog messages')
-    parser.add_argument('--tls', help='use TLS')
-    parser.add_argument('--ca', help='ca file for verifying remote server')
-    parser.add_argument('--cert', help='certificate to present to the remote server')
-    parser.add_argument('--key', help='keyfile for the certificate')
-    parser.add_argument('--facility', help='syslog facility')
-    parser.add_argument('--data', help='structured data')
-    parser.add_argument('--verify', help='verify server common name', action='store_true')
-    parser.add_argument('--yaml', help='yaml subsection')
+    parser.add_argument("--config", help="configuration file")
+    parser.add_argument("--server", help="name or address of remote syslog server")
+    parser.add_argument("--port", help="remote syslog server port", type=int)
+    parser.add_argument("--json", help="send ELK-JSON logs", action="store_false")
+    parser.add_argument("--bsd", help="send BSD style logs", action="store_true")
+    parser.add_argument("--hostname", help="hostname to inject in syslog messages")
+    parser.add_argument("--udp", help="use UDP", action="store_true")
+    parser.add_argument("--tls", help="use TLS")
+    parser.add_argument("--ca", help="ca file for verifying remote server")
+    parser.add_argument("--cert", help="certificate to present to the remote server")
+    parser.add_argument("--key", help="keyfile for the certificate")
+    parser.add_argument("--facility", help="syslog facility")
+    parser.add_argument("--data", help="structured data")
+    parser.add_argument("--program", help="program")
+    parser.add_argument(
+        "--verify", help="verify server common name", action="store_true"
+    )
+    parser.add_argument("--yaml", help="yaml subsection")
 
     return parser.parse_args()
 
@@ -100,29 +121,29 @@ def config_file(args, config):
             config = config[args.yaml]
         except:
             raise ValueError('no such yaml key "{}"'.format(args.yaml))
-        
+
     # override the yaml config with any command line arguments present
     for n in vars(args):
         if not getattr(args, n):
             setattr(args, n, config.get(n))
 
-    # if the certificates are embedded in the yaml, write them 
+    # if the certificates are embedded in the yaml, write them
     # to temporary files and replace them with pathnames
-    for n in ('ca', 'cert', 'key'):
+    for n in ("ca", "cert", "key"):
         # are we a pem or a pathname
-        if getattr(args, n) and '-----' in getattr(args, n):
+        if getattr(args, n) and "-----" in getattr(args, n):
             (fd, path) = tempfile.mkstemp()
             os.write(fd, getattr(args, n))
             setattr(args, n, path)
             os.close(fd)
 
-    return args 
+    return args
 
 
 def config_check(args):
     if not args.server:
         if not args.config:
-            raise ValueError('argument --server is required')
+            raise ValueError("argument --server is required")
         else:
             raise ValueError('config option "server" is required')
 
@@ -131,11 +152,11 @@ def config_check(args):
 
     if args.tls:
         # parser does not support mutually inclusive arguments
-        if ((args.cert and not args.key) or (not args.cert and args.key)):
-            raise ValueError('cert and key are mutually inclusive')
+        if (args.cert and not args.key) or (not args.cert and args.key):
+            raise ValueError("cert and key are mutually inclusive")
 
     # we are managing defaults here due to the yaml/cmdline merge
-    args.facility = 'user' if not args.facility else args.facility
+    args.facility = "user" if not args.facility else args.facility
     args.port = 6514 if not args.port else args.port
 
     try:
@@ -152,64 +173,90 @@ def read_event(fd):
     # first line is the generic supervisor event header
     # ver: server: serial: pool: poolserial: eventname: len:
     d = fd.readline()
-    payload.update(dict([ x.split(':') for x in d.split() ]))
+    payload.update(dict([x.split(":") for x in d.split()]))
 
     # read the rest of the event. the PROCESS_LOG header is always terminated
     # with a newline, the remainder is the msg
     # processname: groupname: pid: channel:
     # msg
     # ...
-    ( d, msg ) = fd.read(int(payload.get('len'))).split('\n', 1)
-    payload.update(dict([ x.split(':') for x in d.split() ]))
+    (d, msg) = fd.read(int(payload.get("len"))).split("\n", 1)
+    payload.update(dict([x.split(":") for x in d.split()]))
 
     # encode our message if necessary
     if type(msg) is unicode:
-        msg = msg.encode('utf-8')
+        msg = msg.encode("utf-8")
 
-    payload.update({'msg': msg})
+    payload.update({"msg": msg})
 
-    return (payload)
+    return payload
 
 
 def create_priority(eventname, facility):
     # set the message priority based on the incoming supervisor event type
-    if eventname == 'PROCESS_LOG_STDOUT':
-        priority = (facility_names[facility] << 3) | priority_names['info']
+    if eventname == "PROCESS_LOG_STDOUT":
+        priority = (facility_names[facility] << 3) | priority_names["info"]
     else:
-        priority = (facility_names[facility] << 3) | priority_names['error']
+        priority = (facility_names[facility] << 3) | priority_names["error"]
 
     return priority
 
 
+def msg_json(priority, hostname, payload):
+    # craft an ELK-JSON style syslog message
+    payload.update({"hostname": hostname})
+    fmt = "<{}>{} {}: {}"
+    time_date = datetime.datetime.utcnow().strftime("%b %e %H:%M:%S")
+    msg = fmt.format(
+        priority, time_date, payload.get("processname"), payload.get("msg")
+    )
+    return msg
+
+
 def msg_bsd(priority, hostname, payload):
     # craft a rfc3164 (BSD) style syslog message
-    fmt = '<{}>{} {} {}: {}'
-    time_date = datetime.datetime.utcnow().strftime('%b %e %H:%M:%S')
-    msg = fmt.format(priority, time_date, hostname,
-                     payload.get('processname'), payload.get('msg'))
+    fmt = "<{}>{} {} {}: {}"
+    time_date = datetime.datetime.utcnow().strftime("%b %e %H:%M:%S")
+    msg = fmt.format(
+        priority, time_date, hostname, payload.get("processname"), payload.get("msg")
+    )
     return msg
 
 
 def msg_rfc5424(priority, hostname, data, payload):
     # craft a rfc5424 complaint syslog message
-    fmt = '<{}>1 {} {} {} {} {} {} {}'
-    data = '[{}]'.format(data) if data else '-'
-    time_date = datetime.datetime.utcnow().isoformat() + '+00:00'
-    msg = fmt.format(priority, time_date, hostname, payload.get('processname'),
-                     payload.get('pid'), payload.get('serial'), data, payload.get('msg'))
+    fmt = "<{}>1 {} {} {} {} {} {} {}"
+    data = "[{}]".format(data) if data else "-"
+    time_date = datetime.datetime.utcnow().isoformat() + "+00:00"
+    msg = fmt.format(
+        priority,
+        time_date,
+        hostname,
+        payload.get("processname"),
+        payload.get("pid"),
+        payload.get("serial"),
+        data,
+        payload.get("msg"),
+    )
     return msg
 
 
 def ssl_connect(args):
     while True:
         try:
-            ssl_socket = syslog_socket(address=(args.server, args.port), tls=args.tls,
-                                  ca_certs=args.ca, keyfile=args.key, certfile=args.cert)
+            ssl_socket = syslog_socket(
+                address=(args.server, args.port),
+                tls=args.tls,
+                ca_certs=args.ca,
+                keyfile=args.key,
+                certfile=args.cert,
+                udp=args.udp,
+            )
         except Exception as err:
-            write_stderr(repr(err)  + '\n')
+            write_stderr(repr(err) + "\n")
             time.sleep(2)
         else:
-            write_stderr('connected to {}:{}\n'.format(args.server, args.port))
+            write_stderr("connected to {}:{}\n".format(args.server, args.port))
             break
 
     return ssl_socket
@@ -222,7 +269,7 @@ def handler():
     # parse the config file if requested
     if args.config:
         try:
-            config = yaml.load(file(args.config, 'r'))
+            config = yaml.load(file(args.config, "r"))
             args = config_file(args, config)
         except ValueError as err:
             parser.error(err)
@@ -251,9 +298,14 @@ def handler():
             write_stderr(repr(err))
             continue
 
-        priority = create_priority(payload.get('eventname'), args.facility)
+        if args.program:
+            payload.update({"processname": args.program})
 
-        if args.bsd:
+        priority = create_priority(payload.get("eventname"), args.facility)
+
+        if args.json:
+            msg = msg_json(priority, hostname, payload)
+        elif args.bsd:
             msg = msg_bsd(priority, hostname, payload)
         else:
             msg = msg_rfc5424(priority, hostname, args.data, payload)
@@ -262,9 +314,7 @@ def handler():
             ssl_socket.send(msg)
         except Exception as err:
             event_fail(sys.stdout)
-            write_stderr(repr(err) + '\n')
+            write_stderr(repr(err) + "\n")
             ssl_socket = ssl_connect(args)
         else:
             event_ok(sys.stdout)
-
-

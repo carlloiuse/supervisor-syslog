@@ -183,16 +183,11 @@ def read_event(fd):
     # ...
     length = payload.get("len")
     if not length:
-        payload.update({"msg": json.dumps(payload).encode("utf-8")})
+        payload.update({"msg": json.dumps(payload)})
         return payload
 
     (d, msg) = fd.read(int(length)).split("\n", 1)
     payload.update(dict([x.split(":") for x in d.split()]))
-
-    # encode our message if necessary
-    if type(msg) is str:
-        msg = msg.encode("utf-8")
-
     payload.update({"msg": msg})
 
     return payload
@@ -210,7 +205,6 @@ def create_priority(eventname, facility):
 
 def msg_json(priority, hostname, payload):
     # craft an ELK-JSON style syslog message
-    payload.update({"hostname": hostname})
     fmt = "<{}>{} {}: {}"
     time_date = datetime.datetime.utcnow().strftime("%b %e %H:%M:%S")
     msg = fmt.format(
@@ -317,7 +311,7 @@ def handler():
             msg = msg_rfc5424(priority, hostname, args.data, payload)
 
         try:
-            ssl_socket.send(msg)
+            ssl_socket.send(msg.encode("utf-8"))
         except Exception as err:
             event_fail(sys.stdout)
             write_stderr(repr(err) + "\n")

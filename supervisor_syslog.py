@@ -190,7 +190,7 @@ def read_event(fd):
     payload.update(dict([x.split(":") for x in d.split()]))
 
     # encode our message if necessary
-    if type(msg) is unicode:
+    if type(msg) is str:
         msg = msg.encode("utf-8")
 
     payload.update({"msg": msg})

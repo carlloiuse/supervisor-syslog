@@ -6,6 +6,7 @@
 
 import argparse
 import datetime
+import json
 import os
 import socket
 import ssl
@@ -180,7 +181,12 @@ def read_event(fd):
     # processname: groupname: pid: channel:
     # msg
     # ...
-    (d, msg) = fd.read(int(payload.get("len"))).split("\n", 1)
+    length = payload.get("len")
+    if not length:
+        payload.update({"msg": json.dumps(payload).encode("utf-8")})
+        return payload
+
+    (d, msg) = fd.read(int(length)).split("\n", 1)
     payload.update(dict([x.split(":") for x in d.split()]))
 
     # encode our message if necessary
